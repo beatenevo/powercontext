@@ -1,6 +1,5 @@
 - 提案名称：`replay_guided_artifact_evolution`
 - 开始日期：2026-09-27
-- RFC PR：待创建
 - 跟踪 Issue：[#1635](https://github.com/oceanbase/powercontext/issues/1635)
 - 相关 RFC：[Experience 与 Skill](0051_experience_skill_artifact_families.md)、
   [Artifact Dreaming](1510-artifact-dreaming.md)、
@@ -22,7 +21,7 @@ RFC 回答两个问题：
 近期范围有意保持克制：
 
 - **P0：** 描述当前机制边界，并用行为等价测试保护它们；
-- **P1：** 定义最小 evaluation-owned recording contract，faithfully replay 已发生的历史；
+- **P1：** 定义 evaluation-owned recording contract，faithfully replay 已发生的历史；
 - **P2 spike：** 只对显式 `refine_experience` Dream 做一个小型、按需开启的 Experience-only 实验。
 
 P3 的 Experience-to-Skill 与 usage-driven Skill replacement 是有条件的后续项。P4 的跨 policy improvement 是
@@ -130,8 +129,6 @@ collaborator result，应验证以下结果不变：
 - retry 与 model-call accounting；
 - Review 与授权行为。
 
-P0 只使用少量固定的 golden fixtures 验证这些边界，不建立覆盖所有 incubation、Dream 和 Skill 配置组合的穷举测试矩阵。
-
 P0 不增加 migration、新 public API、默认配置、额外 Candidate 或额外 model call。退出条件是把当前行为描述清楚并
 充分保护，使后续实验可以衡量真实变化。
 
@@ -140,35 +137,28 @@ P0 不增加 migration、新 public API、默认配置、额外 Candidate 或额
 P1 定义版本化、evaluation-owned replay bundle。它是 RFC 1229 已定义的 `powercontext.e2e-task/v1` replay envelope 的 Artifact-evolution 扩展，不另建一套 workload/replay harness。普通生产 capture 默认关闭；除非受控评估明确提供已经审核或合成的
 材料，否则不保留完整 prompt、task body 或 evidence body。
 
-P1 分为 MVP 与延后的 P4 扩展。MVP 只包含 Experience-only spike 和只读 faithful replay 所需的记录。跨 policy
-replay 的完整元数据有价值，但不是 P1-MVP 的实现阻塞项。
-
 ### Run 与 decision 字段
 
 每个 recorded run 至少包含：
 
-| 字段组 | P1-MVP 必需信息 |
+| 字段组 | 必需信息 |
 | --- | --- |
 | Identity | Bundle schema version、run id、适用时的 exact `DreamRun` ref、timestamp、Scope-safe workload identity |
 | Inputs | Exact input manifest、immutable refs、content/snapshot digest、evidence roles、operation、target 和 expected head |
-| Generation 与 validation | Policy/generator/model/schema/runtime identity、canonical chosen-action signature、typed output 或 terminal result、validator/scorer identity 与各项结果 |
-| Outcome links | exact `DreamRun`、input 和存在时的 Candidate refs；Review、Revision 与 downstream outcome join 作为后续可选 link |
-| Cost | Proposal attempts、model calls 与 retries、input/output tokens、wall time、concurrency 和 validation failures |
+| Logging policy | Policy identity/version、action-space version、prompt/generator/model/schema/runtime identities |
+| Reproducibility | Generator identity（包含已配置的 model settings）；若显式启用 seed，则由该 identity 记录，否则为 deterministic marker；稳定的 decision reason 与 tie-break rule |
+| Dataset 与 partition | RFC 1229 workload manifest identity、evaluation `OFF`/`ON` arm identity、明确的 split/holdout identity（没有额外 partition 时记录为 `none`）与 arm-scoped run identity；近期不新造额外 workload split |
+| Outcome links | pre-decision bundle 中的 exact input refs；Candidate、Review result、最终 Artifact Revision 和 downstream Source/recurrence refs 在独立 sealed post-decision outcome record 中追加 |
+| Cost | Attempts、model calls 与 retries、input/output tokens、wall time、concurrency、validation failures，以及测量时的 Review time |
 
-以下 P4 扩展字段只有在 evaluation harness 已经提供时才记录，不作为 P1-MVP 的交付要求：
-
-- 每个 decision step 的完整 action set；
-- logging-policy version 与 selection probability，或 deterministic selection reason 与 tie-break rule；
-- 存在时的显式 seed identity；
-- RFC 1229 split/holdout identity 与 arm-scoped run identity；
-- support 与 coverage 状态；
-- 为异步 Review、Revision、Source 或 recurrence join 保存 sealed post-decision outcome record。
-
-P1-MVP 的 decision record 记录：
+每个 decision step 记录：
 
 - decision 前已揭示的 observations；
-- chosen canonical action signature；
-- decision parent 与排序信息。
+- 该步实际可选的有限 action set，使用 canonical action signature；
+- chosen action；
+- logging-policy selection probability，或 deterministic selection reason 与等价的 probability `1`；
+- decision parent 与排序信息；
+- support 与 coverage 状态。
 
 每个 `ProposalAttempt` 记录：
 
@@ -180,8 +170,8 @@ P1-MVP 的 decision record 记录：
 - incurred cost 与 retry 信息；execution/retry `attempt_count` 与 `proposal_attempt_id` 分开；
 - nomination status 与 reason。
 
-如果 P4 扩展可用，selection probability 可以审计 logging policy，但不能制造 action overlap。Deterministic logger
-对其他 policy 通常缺乏足够 support。Post-decision links 通过如 `(bundle_id, event_type, exact_ref)` 的幂等 key 异步写入，不能回写 sealed 的 pre-decision observations。
+Selection probability 可以审计 logging policy，但不能制造 action overlap。Deterministic logger 对其他 policy 通常
+缺乏足够 support。Post-decision links 通过如 `(bundle_id, event_type, exact_ref)` 的幂等 key 异步写入，不能回写 sealed 的 pre-decision observations。
 
 ### Faithful replay 语义
 
@@ -207,29 +197,23 @@ Replay 复用已记录的 validator/scorer identity 与结果；重新运行 det
 - 精确复现 baseline action sequence、outcome、nomination 和 cost；
 - absent 或 mismatched action 稳定返回 `out_of_support`；
 - replay 期间不存在 model call、Candidate creation、Review mutation 或 Runtime write；
-- 不泄漏 future information；
+- split/holdout isolation，不泄漏 future information；
 - optional controlled payload 的 redaction/retention 行为。
 
-P1-MVP 不声称支持统计上完整的跨 policy replay，也不声称会改善未来 live run。Split/holdout isolation、support/coverage
-报告和 policy-level replay comparison 属于延后的 P4 扩展。
+P1 不声称 replay 得分更好的 candidate policy 会改善未来 live run。
 
 ## P2：小型 Experience-only spike
 
-这里的 spike 指有明确输入、预算和退出条件的限时可行性实验，不是新的生产 API，也不是默认行为变更。
+P2 只覆盖异步、显式开启的 `refine_experience` 实验，并复用 `evaluation/` 已有的 workload manifest 与 `OFF`/`ON` arm 机制。Scheduled Experience incubation 和 `derive_skill` 保持不变。近期 spike 分为两种分析。
 
-P2 只覆盖异步、显式开启的 `refine_experience` 实验，并复用 `evaluation/` 已有的 workload manifest。现有 `OFF`/`ON`
-arm 属于 evaluation 服务的处理开关（当前表示 plugin disabled/enabled），不是 Dream policy variant。P2 可以复用它的
-workload isolation 和 report 能力；如果要比较 Dream policy，仍需显式定义 Dream-specific treatment。Spike 不新建 arm、
-holdout 或统计分配子系统。Scheduled Experience incubation 和 `derive_skill` 保持不变。近期 spike 分为两种分析。
-
-Baseline 是当前 Dream 行为：一次 run 处理调用方选定的一个问题并产生一个结果；可恢复的执行失败可以用同一组输入重试。公平比较应使用预先登记、可比且匹配的 workload，并在 outcome 产生前固定 baseline/experimental allocation；如果 workload 规模足够，之后再增加随机分配。只在 baseline 失败后触发 candidate 只能回答补救问题，不能回答 1-vs-2 attempt 的总体比较，因此补救结果必须单独报告。实验 policy 仅在以下情形请求有限的 additional
+Baseline 是当前 one-shot Dream 行为。公平比较应在预先登记、可比的 workload 总体上，在 outcome 产生前随机或固定分配 baseline 与 candidate。只在 baseline 失败后触发 candidate 只能回答补救问题，不能回答 1-vs-2 attempt 的总体比较，因此补救结果必须单独报告。实验 policy 仅在以下情形请求有限的 additional
 proposal attempt：
 
 - deterministic validation 发现不存在 eligible proposal；
 - exact input 暴露了实验 action space 能处理的结构性 duplicate、target 或 conflict condition；
 - 预先登记的 experimental decision rule 在预算内要求额外 attempt。
 
-当前公开 `DreamBudget.max_model_calls` 为 `1..2`，第二次 execution attempt 已属于 retry 语义。Spike 不提高这个上限、不挪用 retry 预算，也不把两个独立 branch 塞进一个现有 `DreamRun`。Additional proposal attempt 首先使用 evaluation-owned shadow budget；shadow attempt 不创建 Candidate，实际 Candidate 仍走当前 Dream 行为。若要让多分支直接产生一个 Candidate，必须另行设计 Dream budget/API contract 和 migration。
+当前公开 `DreamBudget.max_model_calls` 为 `1..2`，第二次 execution attempt 已属于 retry 语义。Spike 不提高这个上限、不挪用 retry 预算，也不把两个独立 branch 塞进一个现有 `DreamRun`。Additional proposal attempt 首先使用 evaluation-owned shadow budget；shadow attempt 不创建 Candidate，实际 Candidate 仍走当前 one-shot Dream。若要让多分支直接产生一个 Candidate，必须另行设计 Dream budget/API contract 和 migration。
 
 Spike 必须区分 proposal attempt 与 recoverable inference retry。二者都计入总 model-call 与 wall-time cost，但只有 proposal attempt 形成独立的 comparison branch。
 
@@ -350,14 +334,14 @@ explicit Dream 行为。
 该设计在出现可见的生成改进前增加了 instrumentation 与 evaluation 工作。严格的 replay support 也可能使早期数据
 过于稀疏，无法比较 policy。这是有意接受的限制：用推断的生成结果填补缺口会使 replay 结论失去可信度。
 
-保持当前 Dream 行为不变成本更低，也始终是 baseline。直接默认增加多个 attempt 实现更简单，但会在证明价值
+保持当前 one-shot Dream 不变成本更低，也始终是 baseline。直接默认增加多个 attempt 实现更简单，但会在证明价值
 前提高成本与 Review 压力。先优化 `prepare_context` 会让在线热路径承担错误的实验风险。LLM evaluator 可能提供
 更丰富的排序，但会在 record contract 可信前引入另一层非确定 policy、成本与校准问题。
 
 # 尚未解决的问题
 
 1. 对 P2 `refine_experience` spike 而言，最小且有用的 canonical action vocabulary 是什么？
-2. P2 是否只复用现有 evaluation 的 workload、isolation 和 report 能力，而不把它的 OFF/ON 处理开关当作 Dream policy arm？
+2. 是否应将 Artifact-evolution replay 作为 RFC 1229 replay envelope 的扩展，并复用 `evaluation/` OFF/ON arm？
 3. 在 `max_model_calls <= 2` 不变的前提下，哪些条件应触发 additional proposal attempt，怎样的预算对 baseline 公平？
 4. 受控 replay bundle 应保存加密 payload，还是只保存 manifest/digest，并单独管理 fixture content？
 5. 哪些 exact refs 与 retention window 足以关联 approved result 和 recurrence ledger，同时不耦合两个 store？
@@ -368,9 +352,5 @@ explicit Dream 行为。
 
 - [Dream-RSI 论文](https://arxiv.org/abs/2609.14858)
 - [中文解读](https://mp.weixin.qq.com/s/VRjsoQLqHx80NZpeS5aqkA?scene=1)
-- [Artifact Dreaming](1510-artifact-dreaming.md)
-- [Recurring Failure Repair](1557_recurring_failure_repair.md)
-- [End-to-end Evaluation Architecture](0081_end_to_end_evaluation_architecture.md)
-- [Unified Workloads and Long-horizon Memory Evaluation](1229_unified_workloads_and_long_horizon_memory_evaluation.md)
 
 论文报告的改进依赖其任务、模型、预算和评估器，不应被当作 PowerContext 的预期收益。

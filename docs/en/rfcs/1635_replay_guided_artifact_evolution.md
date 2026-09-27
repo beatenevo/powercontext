@@ -1,6 +1,5 @@
 - Proposal Name: `replay_guided_artifact_evolution`
 - Start Date: 2026-09-27
-- RFC PR: to be assigned
 - Tracking Issue: [#1635](https://github.com/oceanbase/powercontext/issues/1635)
 - Related RFCs: [Experience and Skill](0051_experience_skill_artifact_families.md),
   [Artifact Dreaming](1510-artifact-dreaming.md),
@@ -22,7 +21,7 @@ The RFC answers two questions:
 The near-term scope is deliberately narrow:
 
 - **P0:** document current boundaries and protect them with behavior-equivalence tests;
-- **P1:** define a minimum evaluation-owned recording contract and faithfully replay realized history; and
+- **P1:** define an evaluation-owned recording contract and faithfully replay realized history; and
 - **P2 spike:** test one small, opt-in, Experience-only extension to explicit `refine_experience` Dream runs.
 
 P3 Experience-to-Skill and usage-driven Skill replacement are conditional follow-ons. P4 cross-policy improvement is a
@@ -135,9 +134,6 @@ and collaborator result, they verify the same:
 - retry and model-call accounting; and
 - Review and authorization behavior.
 
-P0 uses a small set of pinned golden fixtures for these boundaries; it does not build an exhaustive cross-product test
-matrix for every incubation, Dream, and Skill configuration.
-
 P0 adds no migration, new public API, default configuration, additional Candidate, or extra model call. Its exit gate is
 that current behavior is explicit and protected well enough for later experiments to measure a real delta.
 
@@ -148,37 +144,28 @@ P1 defines a versioned, evaluation-owned replay bundle. It is an Artifact-evolut
 retain complete prompts, task bodies, or evidence bodies unless a controlled evaluation explicitly supplies reviewed or
 synthetic material.
 
-P1 is intentionally split into an MVP and a deferred P4 extension. The MVP contains only the records required for the
-Experience-only spike and read-only faithful replay. Cross-policy replay metadata is useful, but it is not an MVP
-implementation blocker.
-
 ### Run and decision fields
 
 Each recorded run contains at least:
 
-| Field group | P1-MVP required information |
+| Field group | Required information |
 | --- | --- |
 | Identity | Bundle schema version, run id, exact `DreamRun` ref when applicable, timestamp, Scope-safe workload identity |
 | Inputs | Exact input manifest, immutable refs, content/snapshot digests, evidence roles, operation, target and expected head |
-| Generation and validation | Policy/generator/model/schema/runtime identities, canonical chosen-action signature, typed output or terminal result, validator/scorer identities and individual results |
-| Outcome links | Exact `DreamRun`, input, and Candidate refs when they exist; Review, Revision, and downstream outcome joins are optional follow-up links |
-| Cost | Proposal attempts, model calls and retries, input/output tokens, wall time, concurrency, and validation failures |
+| Logging policy | Policy identity and version, action-space version, prompt/generator/model/schema/runtime identities |
+| Reproducibility | Generator identity including configured model settings; an explicit seed is recorded through that identity, otherwise a deterministic marker; stable decision reason and tie-break rule |
+| Dataset and partition | RFC 1229 workload-manifest identity, evaluation `OFF`/`ON` arm identity, explicit split/holdout identity (or `none` when no extra partition exists), and arm-scoped run identity; no additional workload split is introduced in the near-term scope |
+| Outcome links | Exact input refs in the pre-decision bundle; Candidate, Review result, final Artifact Revision, and downstream Source/recurrence refs are appended to a separate sealed post-decision outcome record |
+| Cost | Attempts, model calls and retries, input/output tokens, wall time, concurrency, validation failures, and Review time when measured |
 
-The following P4 extension fields are recorded only when the evaluation harness already exposes them; they are not
-required to ship P1-MVP:
-
-- the complete action set available at each decision step;
-- logging-policy version and selection probability, or deterministic selection reason and tie-break rule;
-- explicit seed identity when one exists;
-- RFC 1229 split/holdout identity and arm-scoped run identity;
-- support and coverage state; and
-- a sealed post-decision outcome record for asynchronous Review, Revision, Source, or recurrence joins.
-
-The P1-MVP decision record contains:
+Every decision step records:
 
 - the observations revealed before the decision;
-- the chosen canonical action signature; and
-- the decision parent and ordering information.
+- the finite action set actually available at that step, using canonical action signatures;
+- the chosen action;
+- its logging-policy selection probability, or a deterministic selection reason and equivalent probability `1`;
+- the decision parent and ordering information; and
+- support and coverage state.
 
 Every `ProposalAttempt` records:
 
@@ -190,10 +177,9 @@ Every `ProposalAttempt` records:
 - incurred cost and retry information; execution/retry `attempt_count` is distinct from `proposal_attempt_id`; and
 - nomination status and reason.
 
-When the P4 extension is available, selection probabilities make the logging policy auditable; they do not manufacture
-action overlap. A deterministic logger will commonly have poor support for a different policy. Any post-decision links
-are written asynchronously with an idempotency key such as `(bundle_id, event_type, exact_ref)` and never rewrite the
-sealed pre-decision observations.
+Selection probabilities make the logging policy auditable; they do not manufacture action overlap. A deterministic
+logger will commonly have poor support for a different policy. Post-decision links are written asynchronously with an
+idempotency key such as `(bundle_id, event_type, exact_ref)` and never rewrite the sealed pre-decision observations.
 
 ### Faithful replay semantics
 
@@ -222,28 +208,19 @@ Pinned fixtures must demonstrate:
 - exact baseline action sequence, outcome, nomination, and cost reproduction;
 - deterministic `out_of_support` for absent or mismatched actions;
 - no model call, Candidate creation, Review mutation, or Runtime write during replay;
-- no future-information leakage; and
+- split/holdout isolation and no future-information leakage; and
 - redaction/retention behavior for optional controlled payloads.
 
-P1-MVP does not claim to support statistically complete cross-policy replay or to improve future live runs. Split/holdout
-isolation, support/coverage reports, and policy-level replay comparisons belong to the deferred P4 extension.
+P1 does not claim that a replayed candidate policy will improve future live runs.
 
 ## P2: small Experience-only spike
 
-Here, a spike means a time-boxed feasibility experiment with explicit inputs, budgets, and an exit gate. It is not a
-new production API or a default behavior change.
-
 P2 is limited to an asynchronous, explicitly enabled `refine_experience` experiment and reuses the existing
-`evaluation/` workload manifest. The existing `OFF`/`ON` arms belong to the evaluation service's treatment switch
-(currently plugin disabled/enabled); they are not Dream policy variants. P2 may reuse their workload isolation and
-reporting primitives, but must define an explicit Dream-specific treatment if a policy comparison needs one. The
-spike does not introduce a new arm, holdout, or statistical-allocation subsystem. Scheduled Experience incubation and
-`derive_skill` remain unchanged. The near-term spike has two separate analyses.
+`evaluation/` workload manifest and `OFF`/`ON` arm mechanism. Scheduled Experience incubation and `derive_skill`
+remain unchanged. The near-term spike has two separate analyses.
 
-The baseline is the current Dream behavior: one run addresses one caller-selected question and produces one result;
-recoverable execution failures may retry with the same inputs. For a fair comparison, use a pre-registered, comparable, matched
-workload population and fix the baseline/experimental allocation before outcomes are known. Random allocation can be
-added later if the workload size warrants it.
+The baseline is the current one-shot Dream behavior. For a fair comparison, a pre-registered comparable workload
+population is assigned to baseline and candidate arms randomly or by a fixed allocation before outcomes are known.
 Triggering candidate behavior only after baseline failure answers a rescue question, not whether one versus two attempts
 is better overall. Rescue-after-failure results are therefore reported separately.
 
@@ -257,7 +234,7 @@ The experimental policy may request a bounded additional proposal attempt only w
 The current public `DreamBudget.max_model_calls` is `1..2`, and the second execution attempt is already part of retry
 semantics. The spike does not raise this limit, consume retry budget, or put two independent branches into one existing
 `DreamRun`. Additional proposal attempts first use an evaluation-owned shadow budget. Shadow attempts create no Candidate;
-the actual Candidate path remains the current Dream behavior. Routing multiple branches directly into one Candidate
+the actual Candidate path remains the current one-shot Dream. Routing multiple branches directly into one Candidate
 requires a separate Dream budget/API contract and migration discussion.
 
 The spike must distinguish proposal attempts from recoverable inference retries. Both count toward total model-call and
@@ -388,7 +365,7 @@ The design adds instrumentation and evaluation work before visible generation im
 also make early datasets too sparse to compare policies. That is an intended limitation: filling gaps with inferred
 generative results would make the replay claim unsound.
 
-Keeping the current Dream behavior unchanged is cheaper and remains the baseline. Directly adding multiple default
+Keeping the current one-shot Dream unchanged is cheaper and remains the baseline. Directly adding multiple default
 attempts would be simpler to implement, but would raise cost and Review pressure before demonstrating value. Optimizing
 `prepare_context` first would expose the online hot path to the wrong experimental risk. Using an LLM evaluator could
 provide richer rankings, but would introduce another non-deterministic policy, cost, and calibration problem before the
@@ -397,8 +374,7 @@ record contract is trustworthy.
 # Unresolved questions
 
 1. Which canonical action vocabulary is the smallest useful one for the P2 `refine_experience` spike?
-2. Should P2 reuse only the existing evaluation workload, isolation, and reporting primitives, without treating its
-   OFF/ON treatment switch as Dream policy arms?
+2. Is the RFC 1229 replay envelope plus `evaluation/` OFF/ON arm mechanism the right integration boundary?
 3. Which conditions should trigger an additional proposal attempt, and what budget is fair to the baseline while
    `max_model_calls <= 2` remains unchanged?
 4. Should a controlled replay bundle store encrypted payloads, or only manifests/digests plus separately managed fixture
@@ -412,10 +388,7 @@ record contract is trustworthy.
 
 - [Dream-RSI paper](https://arxiv.org/abs/2609.14858)
 - [Chinese overview](https://mp.weixin.qq.com/s/VRjsoQLqHx80NZpeS5aqkA?scene=1)
-- [Artifact Dreaming](1510-artifact-dreaming.md)
-- [Recurring Failure Repair](1557_recurring_failure_repair.md)
-- [End-to-end Evaluation Architecture](0081_end_to_end_evaluation_architecture.md)
-- [Unified Workloads and Long-horizon Memory Evaluation](1229_unified_workloads_and_long_horizon_memory_evaluation.md)
+
 
 The paper's reported improvements depend on its tasks, models, budgets, and evaluators. They are not expected
 PowerContext gains.
