@@ -21,10 +21,9 @@ The RFC answers two questions:
 
 The near-term scope is deliberately narrow:
 
-- **P0:** establish the current Dream and Experience-incubation baseline without changing behavior;
-- **P1:** make realized Dream runs observable and faithfully replayable; and
-- **P2 spike:** determine whether one bounded extra proposal attempt improves Experience generation enough to justify
-  its cost.
+- **P0:** document current boundaries and protect them with behavior-equivalence tests;
+- **P1:** define a minimum evaluation-owned recording contract and faithfully replay realized history; and
+- **P2 spike:** test one small, opt-in, Experience-only extension to explicit `refine_experience` Dream runs.
 
 P3 Experience-to-Skill and usage-driven Skill replacement are conditional follow-ons. P4 cross-policy improvement is a
 research track. They are not short-term delivery commitments.
@@ -119,9 +118,6 @@ experimental; it is not enabled for all Dream runs and does not change scheduled
 
 ## P0: baseline boundaries and equivalence
 
-P0's purpose is to make the current behavior an explicit comparison baseline. It does not optimize Dream or add a new
-execution path.
-
 P0 introduces no behavior change. It documents and tests three baselines independently:
 
 - automatic Experience incubation over Source windows;
@@ -146,9 +142,6 @@ P0 adds no migration, new public API, default configuration, additional Candidat
 that current behavior is explicit and protected well enough for later experiments to measure a real delta.
 
 ## P1: recording contract and faithful replay
-
-P1's purpose is to make one realized Dream run auditable and replayable before comparing any new policy. It does not
-claim policy improvement and does not change Runtime behavior.
 
 P1 defines a versioned, evaluation-owned replay bundle. It is an Artifact-evolution extension of RFC 1229's
 `powercontext.e2e-task/v1` replay envelope, not a second workload or replay harness. Ordinary production capture is off by default and does not
@@ -239,10 +232,6 @@ isolation, support/coverage reports, and policy-level replay comparisons belong 
 
 Here, a spike means a time-boxed feasibility experiment with explicit inputs, budgets, and an exit gate. It is not a
 new production API or a default behavior change.
-
-P2's purpose is to produce the first go/no-go evidence for bounded multi-attempt exploration on Experience generation:
-quality, Review burden, and evolution cost. The first experiment is evaluation-owned and leaves the existing Candidate
-path unchanged.
 
 P2 is limited to an asynchronous, explicitly enabled `refine_experience` experiment and reuses the existing
 `evaluation/` workload manifest. The existing `OFF`/`ON` arms belong to the evaluation service's treatment switch

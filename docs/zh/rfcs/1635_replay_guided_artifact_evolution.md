@@ -21,9 +21,9 @@ RFC 回答两个问题：
 
 近期范围有意保持克制：
 
-- **P0：** 固化当前 Dream 与 Experience incubation baseline，不改变现有行为；
-- **P1：** 让已经发生的 Dream run 可观测并可 faithful replay；
-- **P2 spike：** 判断一次受预算限制的额外 proposal attempt 是否值得其成本。
+- **P0：** 描述当前机制边界，并用行为等价测试保护它们；
+- **P1：** 定义最小 evaluation-owned recording contract，faithfully replay 已发生的历史；
+- **P2 spike：** 只对显式 `refine_experience` Dream 做一个小型、按需开启的 Experience-only 实验。
 
 P3 的 Experience-to-Skill 与 usage-driven Skill replacement 是有条件的后续项。P4 的跨 policy improvement 是
 research track。它们均不是短期交付承诺。
@@ -114,8 +114,6 @@ shadow result，也不改变 Candidate/Review 路径。若要提名 additional b
 
 ## P0：baseline boundary 与行为等价
 
-P0 的作用是把当前行为变成可比较的明确 baseline，不优化 Dream，也不增加新的执行路径。
-
 P0 不改变行为。它分别描述并测试三个 baseline：
 
 - 基于 Source window 的自动 Experience incubation；
@@ -138,9 +136,6 @@ P0 不增加 migration、新 public API、默认配置、额外 Candidate 或额
 充分保护，使后续实验可以衡量真实变化。
 
 ## P1：记录 contract 与 faithful replay
-
-P1 的作用是在比较新 policy 之前，让一次已经发生的 Dream run 可审计、可回放；它不声称带来 policy 改进，也不改变
-Runtime 行为。
 
 P1 定义版本化、evaluation-owned replay bundle。它是 RFC 1229 已定义的 `powercontext.e2e-task/v1` replay envelope 的 Artifact-evolution 扩展，不另建一套 workload/replay harness。普通生产 capture 默认关闭；除非受控评估明确提供已经审核或合成的
 材料，否则不保留完整 prompt、task body 或 evidence body。
@@ -221,9 +216,6 @@ P1-MVP 不声称支持统计上完整的跨 policy replay，也不声称会改�
 ## P2：小型 Experience-only spike
 
 这里的 spike 指有明确输入、预算和退出条件的限时可行性实验，不是新的生产 API，也不是默认行为变更。
-
-P2 的作用是首次为 Experience generation 的 bounded multi-attempt exploration 产出 go/no-go 证据：proposal 质量、Review
-负担和 evolution cost。第一轮实验归 evaluation 所有，不改变现有 Candidate 路径。
 
 P2 只覆盖异步、显式开启的 `refine_experience` 实验，并复用 `evaluation/` 已有的 workload manifest。现有 `OFF`/`ON`
 arm 属于 evaluation 服务的处理开关（当前表示 plugin disabled/enabled），不是 Dream policy variant。P2 可以复用它的
