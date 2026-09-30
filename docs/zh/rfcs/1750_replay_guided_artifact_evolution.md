@@ -105,9 +105,17 @@ P0 不增加 migration、新 public API、默认配置、额外 Candidate 或额
 
 ## P1：记录 contract 与 faithful replay
 
-P1 定义版本化、evaluation-owned replay bundle。它是 RFC 1229 已定义的 `powercontext.e2e-task/v1` replay envelope 的 Artifact-evolution 扩展，不另建一套 workload/replay harness。普通生产 capture 默认关闭；除非受控评估明确提供已经审核或合成的材料，否则不保留完整 prompt、task body 或 evidence body。
+P1 定义版本化、evaluation-owned replay bundle。它在适用时遵循 RFC 1229 的 workload 与 evaluation 约定，并可引用 typed `powercontext.e2e-evidence/v1` records；不另建一套 workload/replay harness。普通生产 capture 默认关闭；除非受控评估明确提供已经审核或合成的材料，否则不保留完整 prompt、task body 或 evidence body。
 
 P1 分为 MVP 与延后的 P4 扩展。MVP 只包含 Experience-only spike 和只读 faithful replay 所需的记录。跨 policy replay 的完整元数据有价值，但不是 P1-MVP 的实现阻塞项。
+
+### Evaluation ownership 与 contract adapter
+
+P1 和 P2 由 `evaluation/` 下的 Dream Evolution Evaluation Harness 负责。它通过一个 Dream execution adapter 复用现有 evaluation 的 Scope 隔离、workload 选择、保留策略和 report rendering 组件。Adapter 负责 exact Dream input fixture、baseline/shadow 分配、attempt 记录、replay 查询和结果 projection；Dream bundle 不会被当作 Bub workload 或 SWE-Pro run。
+
+本 RFC 唯一需要新增的 versioned artifact 是 `powercontext.artifact-evolution/v1`。它的 `execution.type` 为 `dream`，workload section 记录 `refine_experience` operation、exact Memory/Experience/Source refs、target 与 expected head、fixture digest、treatment 和声明的 budget。如果存在上游 task，可以引用 `powercontext.e2e-task/v1` entry 作为 provenance，但 Dream input 不需要适配成该 catalog。如果底层运行产生了可复用的 typed evidence，bundle 可以通过 adapter 引用 `powercontext.e2e-evidence/v1`；Adapter 只补充 exact artifact refs、action signatures、nomination state 和 validator results 等 Dream 专属字段，不改变共享 evidence contract。
+
+现有 Bub/Harbor catalog 与独立的 SWE-Pro patch/grading path 仍由各自 owner 负责，它们的 workload 或 result artifact 不直接接收 Dream bundle。Evaluation report 是 `powercontext.artifact-evolution/v1` 的 projection，位于 Runtime table 与 public run API 之外。若 bundle 的 schema、operation、fixture digest 或 evidence reference 不匹配，adapter 必须拒绝它。
 
 ### Run 与 decision 字段
 
@@ -150,7 +158,7 @@ P1-MVP 的 decision record 记录：
 
 ### Faithful replay 语义
 
-这里的 faithful replay 是 RFC 1229 envelope 中的 read-only realized-attempt 模式。它不等同于仓库中通过公开 API 重放真实服务请求的脚本。Replay 只读查询已真实发生的 records。输入相同的 revealed observations 和 canonical action signature 时，它返回已保存的 result 与 cost。它绝不调用会产生新 branch 的 generator 或 evaluator。
+这里的 faithful replay 是 `powercontext.artifact-evolution/v1` 中的 read-only realized-attempt 模式，并使用 adapter 声明的 typed evidence reference。它可以引用 RFC 1229 workload provenance，但不等同于仓库中通过公开 API 重放真实服务请求的脚本。Replay 只读查询已真实发生的 records。输入相同的 revealed observations 和 canonical action signature 时，它返回已保存的 result 与 cost。它绝不调用会产生新 branch 的 generator 或 evaluator。
 
 若不存在 exact action signature，replay 返回带原因的 `out_of_support`。它不得：
 
@@ -160,7 +168,7 @@ P1-MVP 的 decision record 记录：
 - 虚构 reward 或零成本结果；
 - 让 future observation、future evaluation label、Review decision 或 downstream outcome 影响更早的 decision。
 
-Replay 复用已记录的 validator/scorer identity 与结果。重新运行 deterministic validator 只能作为独立 diagnostic，不能覆盖原始结果或 nomination。Replay report 应按 workload、policy、operation 以及适用时的 environment 分层，报告受支持 decision 与完整 trajectory 的比例。Unsupported trajectory 必须显式报告，不能从分母中静默删除。
+Replay 复用已记录的 validator/scorer identity 与结果。重新运行 deterministic validator 只能作为独立 diagnostic，不能覆盖原始结果或 nomination。P1 必须报告基础 exact-replay coverage：supported requested decision / all requested decision，以及 complete supported trajectory / all requested trajectory。Unsupported decision 与 trajectory 必须留在分母中，并按 workload、policy、operation 以及适用时的 environment 报告。这些比例只衡量已记录历史能否被精确 replay，不表示其他 policy 已经获得足够的 action support。
 
 ### P1 验证
 
@@ -173,13 +181,13 @@ Replay 复用已记录的 validator/scorer identity 与结果。重新运行 det
 - 不泄漏 future information；
 - optional controlled payload 的 redaction/retention 行为。
 
-P1-MVP 不声称支持统计上完整的跨 policy replay，也不声称会改善未来 live run。Split/holdout isolation、support/coverage 报告和 policy-level replay comparison 属于延后的 P4 扩展。
+P1-MVP 不声称支持统计上完整的跨 policy replay，也不声称会改善未来 live run。P1 仍然要求上述基础 exact-replay coverage。Split/holdout isolation、跨 policy action support/coverage 和 policy-level replay comparison 属于延后的 P4 扩展。
 
 ## P2：小型 Experience-only spike
 
 这里的 spike 指有明确输入、预算和退出条件的限时可行性实验，不是新的生产 API，也不是默认行为变更。
 
-P2 只覆盖异步、显式开启的 `refine_experience` 实验，并复用 `evaluation/` 已有的 workload manifest。现有 `OFF`/`ON` arm 属于 evaluation 服务的处理开关（当前表示 plugin disabled/enabled），不是 Dream policy variant。P2 可以复用它的 workload isolation 和 report 能力；如果要比较 Dream policy，仍需显式定义 Dream-specific treatment。Spike 不新建 arm、holdout 或统计分配子系统。Scheduled Experience incubation 和 `derive_skill` 保持不变。近期 spike 分为两种分析。
+P2 只覆盖异步、显式开启的 `refine_experience` 实验，并通过 Dream Evolution Evaluation Harness 使用 `powercontext.artifact-evolution/v1`。现有 `OFF`/`ON` arm 属于 evaluation 服务的处理开关（当前表示 plugin disabled/enabled），不是 Dream policy variant。Harness 可以通过 adapter 复用它的 Scope isolation、workload selection 和 report 能力，但必须定义 Dream-specific treatment 与 result projection。Dream attempt 不经过 Bub/Harbor catalog 或独立的 SWE-Pro runner。Spike 不新建 arm、holdout 或统计分配子系统。Scheduled Experience incubation 和 `derive_skill` 保持不变。近期 spike 分为两种分析。
 
 Baseline 是当前 Dream 行为：一次 run 处理调用方选定的一个问题并产生一个结果；可恢复的执行失败可以用同一组输入重试。公平比较应使用预先登记、可比且匹配的 workload，并在 outcome 产生前固定 baseline/experimental allocation。如果 workload 规模足够，之后再增加随机分配。只在 baseline 失败后触发 candidate 只能回答补救问题，不能回答 1-vs-2 attempt 的总体比较，因此补救结果必须单独报告。实验 policy 仅在以下情形请求有限的 additional proposal attempt：
 
@@ -192,6 +200,25 @@ Baseline 是当前 Dream 行为：一次 run 处理调用方选定的一个问�
 Spike 必须区分 proposal attempt 与 recoverable inference retry。二者都计入总 model-call 与 wall-time cost，但只有 proposal attempt 形成独立的 comparison branch。
 
 执行前固定 proposal attempt 上限、包含 retry 的总 model call、input/output token、wall time 和 concurrency。以 `DreamRun.usage` 作为 live generation cost 的权威口径，shadow evaluation cost 单独报告，不能重复相加。RFC 在完成 workload 测量前不规定数值默认值。触达任何限制时停止 run 并记录原因。
+
+### 预先登记的比较规则
+
+对于每个匹配的 workload `W`，Harness 使用同一组 immutable input 运行当前 Dream action `B`（baseline），并在 decision rule 允许时运行一个 additional shadow action `S`。`B` 仍是现有 Candidate/Review 路径中唯一可能进入的结果。P2 的主要 quality comparison 在固定 workload 上分别评估 `B` 和 `S`；不使用 `max(B, S)` 作为 best-of-two 生产结果，也不把 `S` 当作 nominated Candidate。
+
+固定 fixture 的规则如下：
+
+下表中的 score 仅用于说明规则；实际 Review scale 与最小 effect 在运行 workload 前固定。
+
+| Workload | Baseline `B` | Shadow `S` | Quality comparison | Candidate 与 cost 处理 |
+| --- | --- | --- | --- | --- |
+| `W1` | Eligible，blinded Review score 为 3 | Eligible，score 为 4 | 配对差值 `S - B = +1`，两个 score 都报告 | `B` 仍是唯一 Candidate result；计入 `B`、`S` 的执行、retry 和 validation cost |
+| `W2` | Eligible，score 为 3 | 被 deterministic validation 判定为 ineligible | 记录 `B` 的 score；`S` 记为 eligibility failure，不填充虚构 quality score | `B` 仍是唯一 Candidate result；计入两次 attempt 及其 validation/retry cost |
+| `W3` | Ineligible | Ineligible | 记录 zero eligible proposal，不分配 synthetic quality score | 不产生 Candidate；计入所有已发生的 execution、retry 和 validation cost |
+| `W4` | Eligible，score 为 4 | Eligible，score 为 4 | 记录 tie，quality delta 为 0 | `B` 仍是唯一 Candidate result；计入两次 attempt 及其 validation/retry cost |
+
+如果 `B` execution 失败而 `S` 成功，该 workload 单独进入 rescue-after-failure 分层，不进入主要的 one-versus-two-attempt 比较。Human Review effort 单独报告；每个 workload 的 evolution cost 包含 baseline 和 shadow 的 model call、retry、wall time、token、deterministic validation 以及失败或丢弃的 attempt。共享 setup cost 只计入一次，并记录分摊方式。缺失 score 或失败 attempt 不能从分母中静默删除。
+
+Spike 开始前登记继续推进所需的最小 paired quality effect 或 cost reduction。Tie 表示零改进，zero-eligible workload 表示 eligibility failure 而非 quality gain。只有在预先登记的 quality/cost 条件满足，且 Scope、lineage、target、fabrication 与 Review-bypass guardrail 均保持干净时，exit gate 才能通过。
 
 ### 初始 validators
 
@@ -222,7 +249,7 @@ Spike 报告 quality/cost Pareto frontier，不将所有指标混成一个分数
 | 阶段 | 必需证据 |
 | --- | --- |
 | P0 | 行为等价与 invariant 保持 |
-| P1 | Replay fidelity、record completeness、support/coverage、leakage check 与 replay cost |
+| P1 | Replay fidelity、record completeness、基础 exact-replay coverage、leakage check 与 replay cost |
 | P2 | Deterministic eligibility、blinded Review disposition/reason、分开的 proposal-attempt 与 execution/retry/model-call/token/wall-time cost，以及 fresh live validation |
 | 有条件的后续工作 | Approved Revision recall/usage、recurrence 或 Skill validation、task outcome、runtime、token、turn 与 tool call |
 
@@ -265,7 +292,7 @@ PowerContext 目前有 `skill-usage` evidence model 与 recording entry point，
 
 ## P4：跨 policy replay research
 
-P4 可以研究 realized history 上不同的 attempt-allocation、pruning、stopping 与 nomination policy，但当前不排入工程交付。只有 logging-policy 数据提供足够 action support、RFC 1229 workload manifest 与 arm assignment 稳定且 promotion gate 已预先登记时，这项研究才有意义。
+P4 可以研究 realized history 上不同的 attempt-allocation、pruning、stopping 与 nomination policy，但当前不排入工程交付。只有 logging-policy 数据提供足够的跨 policy action support 与 coverage、RFC 1229 workload manifest 与 arm assignment 稳定且 promotion gate 已预先登记时，这项研究才有意义。
 
 Replay result 只筛选 candidate，不授权部署。即使 policy 在 supported replay 上得分更好，仍必须经过 fresh live Dream run、fresh workload evaluation、人工 Review 和 code/configuration review。任意 model-generated executable policy code 不在范围内。
 
@@ -293,7 +320,7 @@ P0 不改变 API、storage schema、migration、default 或可观察 Candidate �
 # 尚未解决的问题
 
 1. 对 P2 `refine_experience` spike 而言，最小且有用的 canonical action vocabulary 是什么？
-2. P2 是否只复用现有 evaluation 的 workload、isolation 和 report 能力，而不把它的 OFF/ON 处理开关当作 Dream policy arm？
+2. Dream adapter 应复用哪些现有 evaluation isolation 与 report 组件，哪些 adapter 字段需要在记录第一个 fixture 前固定？
 3. 在 `max_model_calls <= 2` 不变的前提下，哪些条件应触发 additional proposal attempt，怎样的预算对 baseline 公平？
 4. 受控 replay bundle 应保存加密 payload，还是只保存 manifest/digest，并单独管理 fixture content？
 5. 哪些 exact refs 与 retention window 足以关联 approved result 和 recurrence ledger，同时不耦合两个 store？

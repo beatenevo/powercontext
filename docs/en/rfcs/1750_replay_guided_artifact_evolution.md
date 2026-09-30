@@ -105,9 +105,17 @@ P0 adds no migration, new public API, default configuration, additional Candidat
 
 ## P1: recording contract and faithful replay
 
-P1 defines a versioned, evaluation-owned replay bundle. It is an Artifact-evolution extension of RFC 1229's `powercontext.e2e-task/v1` replay envelope, not a second workload or replay harness. Ordinary production capture is off by default and does not retain complete prompts, task bodies, or evidence bodies unless a controlled evaluation explicitly supplies reviewed or synthetic material.
+P1 defines a versioned, evaluation-owned replay bundle. It follows RFC 1229's workload and evaluation conventions where applicable and may reference typed `powercontext.e2e-evidence/v1` records; it is not a second workload or replay harness. Ordinary production capture is off by default and does not retain complete prompts, task bodies, or evidence bodies unless a controlled evaluation explicitly supplies reviewed or synthetic material.
 
 P1 is intentionally split into an MVP and a deferred P4 extension. The MVP contains only the records required for the Experience-only spike and read-only faithful replay. Cross-policy replay metadata is useful, but it is not an MVP implementation blocker.
+
+### Evaluation ownership and contract adapter
+
+P1 and P2 are owned by a Dream Evolution Evaluation Harness under `evaluation/`. It reuses existing components for Scope isolation, workload selection, retention, and report rendering through one Dream execution adapter. The adapter owns the exact Dream input fixture, baseline/shadow allocation, attempt recording, replay lookup, and result projection; it does not turn the Dream bundle into a Bub workload or a SWE-Pro run.
+
+The only new versioned artifact required by this RFC is `powercontext.artifact-evolution/v1`. Its `execution.type` is `dream`, and its workload section records the `refine_experience` operation, exact Memory/Experience/Source refs, target and expected head, fixture digest, treatment, and declared budgets. A `powercontext.e2e-task/v1` entry may be referenced as upstream task provenance when one exists, but Dream inputs do not need to fit that catalog. When an underlying run produces reusable typed evidence, the bundle may reference `powercontext.e2e-evidence/v1` through the adapter; the adapter adds Dream-specific refs, action signatures, nomination state, and validator results without changing the shared evidence contract.
+
+The existing Bub/Harbor catalog and independent SWE-Pro patch/grading path remain separate owners. Their workload or result artifacts are not passed through unchanged. The evaluation report is a projection of `powercontext.artifact-evolution/v1`, outside Runtime tables and the public run API. The adapter rejects a bundle whose schema, operation, fixture digest, or evidence reference does not match the declared contract.
 
 ### Run and decision fields
 
@@ -150,7 +158,7 @@ When the P4 extension is available, selection probabilities make the logging pol
 
 ### Faithful replay semantics
 
-This faithful replay mode is a read-only realized-attempt mode inside the RFC 1229 envelope. It is not the repository's script that replays requests through a live public API. Replay is a read-only lookup over realized records. Given the same revealed observations and canonical action signature, it returns the saved result and saved cost. It never calls a generator or evaluator that could create a new branch.
+This faithful replay mode is a read-only realized-attempt mode inside `powercontext.artifact-evolution/v1`, using the typed evidence references declared by its adapter. It may reference RFC 1229 workload provenance, but it is not the repository's script that replays requests through a live public API. Replay is a read-only lookup over realized records. Given the same revealed observations and canonical action signature, it returns the saved result and saved cost. It never calls a generator or evaluator that could create a new branch.
 
 If the exact action signature is absent, replay returns `out_of_support` with a reason. It must not:
 
@@ -160,7 +168,7 @@ If the exact action signature is absent, replay returns `out_of_support` with a 
 - fabricate a reward or zero-cost result; or
 - allow future observations, future evaluation labels, Review decisions, or downstream outcomes to influence an earlier decision.
 
-A replay reuses the recorded validator/scorer identities and results. Re-running a deterministic validator is an independent diagnostic and cannot replace the recorded result or nomination. A replay report includes the fraction of requested decisions and complete trajectories that were supported, stratified by workload, policy, operation, and environment where relevant. Unsupported trajectories are reported, not silently dropped from the denominator.
+A replay reuses the recorded validator/scorer identities and results. Re-running a deterministic validator is an independent diagnostic and cannot replace the recorded result or nomination. P1 must report basic exact-replay coverage: supported requested decisions divided by all requested decisions, and complete supported trajectories divided by all requested trajectories. Unsupported decisions and trajectories stay in the denominator and are reported by workload, policy, operation, and environment where relevant. These ratios measure whether the realized records can be replayed exactly; they do not claim that another policy had sufficient action support.
 
 ### P1 validation
 
@@ -173,13 +181,13 @@ Pinned fixtures must demonstrate:
 - no future-information leakage; and
 - redaction/retention behavior for optional controlled payloads.
 
-P1-MVP does not claim to support statistically complete cross-policy replay or to improve future live runs. Split/holdout isolation, support/coverage reports, and policy-level replay comparisons belong to the deferred P4 extension.
+P1-MVP does not claim to support statistically complete cross-policy replay or to improve future live runs. P1 still requires the basic exact-replay coverage described above. Split/holdout isolation, cross-policy action support/coverage, and policy-level replay comparisons belong to the deferred P4 extension.
 
 ## P2: small Experience-only spike
 
 Here, a spike means a time-boxed feasibility experiment with explicit inputs, budgets, and an exit gate. It is not a new production API or a default behavior change.
 
-P2 is limited to an asynchronous, explicitly enabled `refine_experience` experiment and reuses the existing `evaluation/` workload manifest. The existing `OFF`/`ON` arms belong to the evaluation service's treatment switch (currently plugin disabled/enabled); they are not Dream policy variants. P2 may reuse their workload isolation and reporting primitives, but must define an explicit Dream-specific treatment if a policy comparison needs one. The spike does not introduce a new arm, holdout, or statistical-allocation subsystem. Scheduled Experience incubation and `derive_skill` remain unchanged. The near-term spike has two separate analyses.
+P2 is limited to an asynchronous, explicitly enabled `refine_experience` experiment and uses the workload section of `powercontext.artifact-evolution/v1` through the Dream Evolution Evaluation Harness. The existing `OFF`/`ON` arms belong to the evaluation service's treatment switch (currently plugin disabled/enabled); they are not Dream policy variants. The harness may reuse their Scope isolation, workload selection, and reporting primitives through an adapter, but it must define a Dream-specific treatment and result projection. It does not route Dream attempts through the Bub/Harbor catalog or the independent SWE-Pro runner. The spike does not introduce a new arm, holdout, or statistical-allocation subsystem. Scheduled Experience incubation and `derive_skill` remain unchanged. The near-term spike has two separate analyses.
 
 The baseline is the current Dream behavior: one run addresses one caller-selected question and produces one result; recoverable execution failures may retry with the same inputs. For a fair comparison, use a pre-registered, comparable, matched workload population and fix the baseline/experimental allocation before outcomes are known. Random allocation can be added later if the workload size warrants it. Triggering candidate behavior only after baseline failure answers a rescue question, not whether one versus two attempts is better overall. Rescue-after-failure results are therefore reported separately.
 
@@ -194,6 +202,25 @@ The current public `DreamBudget.max_model_calls` is `1..2`, and the second execu
 The spike must distinguish proposal attempts from recoverable inference retries. Both count toward total model-call and wall-time cost, but only proposal attempts create independent comparison branches.
 
 Before execution, the experiment fixes maximum proposal attempts, total model calls including retries, input/output tokens, wall time, and concurrency. It reports live `DreamRun.usage` as the authoritative live generation cost and shadow evaluation cost separately, so costs are never counted twice. The RFC intentionally does not standardize numeric defaults before workload measurement. A run that reaches any limit stops and records the reason.
+
+### Pre-registered comparison rule
+
+For each matched workload `W`, the harness uses the same immutable inputs to run the current Dream action `B` (baseline) and, when the decision rule permits it, one additional shadow action `S`. `B` remains the only result eligible for the existing Candidate/Review path. The primary P2 quality comparison scores `B` and `S` as separate proposals on the fixed workload; it does not use `max(B, S)` as a best-of-two production result and it does not treat `S` as a nominated Candidate.
+
+The following fixture makes the rule concrete:
+
+The scores below are illustrative; the actual Review scale and minimum effect are fixed before the workload is run.
+
+| Workload | Baseline `B` | Shadow `S` | Quality comparison | Candidate and cost treatment |
+| --- | --- | --- | --- | --- |
+| `W1` | Eligible, blinded Review score 3 | Eligible, score 4 | Paired difference `S - B = +1`; both scores are reported | `B` remains the only Candidate result; charge `B` and `S` execution, retries, and validation costs |
+| `W2` | Eligible, score 3 | Ineligible by deterministic validation | Score `B`; report `S` as an eligibility failure with no imputed quality score | `B` remains the only Candidate result; charge both attempts and all validation/retry costs |
+| `W3` | Ineligible | Ineligible | Record zero eligible proposals; do not assign a synthetic quality score | No Candidate; charge all incurred execution, retry, and validation costs |
+| `W4` | Eligible, score 4 | Eligible, score 4 | Record a tie and a zero quality delta | `B` remains the only Candidate result; charge both attempts and all validation/retry costs |
+
+If `B` fails execution and `S` succeeds, the workload is reported in a separate rescue-after-failure stratum and is excluded from the primary one-versus-two-attempt comparison. Human Review effort is reported separately; the evolution cost for every workload includes baseline and shadow model calls, retries, wall time, tokens, deterministic validation, and failed or discarded attempts. Shared setup cost is charged once to the workload and its allocation is recorded. No missing score or failed attempt is silently removed from a denominator.
+
+Before the spike starts, the team preregisters the minimum paired quality effect or cost reduction required to continue. A tie is zero improvement, and a zero-eligible workload is an eligibility failure rather than a quality gain. The exit gate can pass only when the pre-registered quality/cost condition is met and the Scope, lineage, target, fabrication, and Review-bypass guardrails remain clean.
 
 ### Initial validators
 
@@ -224,7 +251,7 @@ Evaluation is mandatory but proportional to the stage:
 | Stage | Required evidence |
 | --- | --- |
 | P0 | Behavior equivalence and invariant preservation |
-| P1 | Replay fidelity, record completeness, support/coverage, leakage checks, and replay cost |
+| P1 | Replay fidelity, record completeness, basic exact-replay coverage, leakage checks, and replay cost |
 | P2 | Deterministic eligibility, blinded Review disposition/reason, separate proposal-attempt and execution/retry/model-call/token/wall-time cost, and fresh live validation |
 | Conditional later work | Approved-Revision recall or usage, recurrence or Skill validation, task outcome, runtime, tokens, turns, and tool calls |
 
@@ -267,7 +294,7 @@ Such a producer should be designed only after coverage and quality gates exist f
 
 ## P4: cross-policy replay research
 
-P4 may investigate alternative attempt-allocation, pruning, stopping, and nomination policies over realized histories. It is not currently scheduled engineering work. Research is meaningful only when logging-policy data provides adequate action support, RFC 1229 workload manifests and arm assignments are stable, and promotion gates are preregistered.
+P4 may investigate alternative attempt-allocation, pruning, stopping, and nomination policies over realized histories. It is not currently scheduled engineering work. Research is meaningful only when logging-policy data provides adequate cross-policy action support and coverage, RFC 1229 workload manifests and arm assignments are stable, and promotion gates are preregistered.
 
 Replay results screen candidates; they do not authorize deployment. A policy with a better supported replay result must still pass fresh live Dream runs, fresh workload evaluation, human Review, and code/configuration review. Arbitrary model-generated executable policy code is out of scope.
 
@@ -295,7 +322,7 @@ Keeping the current Dream behavior unchanged is cheaper and remains the baseline
 # Unresolved questions
 
 1. Which canonical action vocabulary is the smallest useful one for the P2 `refine_experience` spike?
-2. Should P2 reuse only the existing evaluation workload, isolation, and reporting primitives, without treating its OFF/ON treatment switch as Dream policy arms?
+2. Which existing evaluation isolation and reporting components should the Dream adapter reuse, and which adapter fields must be fixed before the first fixture is recorded?
 3. Which conditions should trigger an additional proposal attempt, and what budget is fair to the baseline while `max_model_calls <= 2` remains unchanged?
 4. Should a controlled replay bundle store encrypted payloads, or only manifests/digests plus separately managed fixture content?
 5. Which exact refs and retention windows are sufficient to join approved results to the recurrence ledger without coupling the stores?
