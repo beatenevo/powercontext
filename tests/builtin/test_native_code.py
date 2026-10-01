@@ -968,7 +968,7 @@ def test_parser_memory_budget_terminates_worker_and_preserves_evidence(repositor
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin uses parent-enforced RSS budgets")
 def test_parser_memory_monitor_failure_aborts_rebuild(repository, monkeypatch):
-    import psutil
+    psutil = pytest.importorskip("psutil")
 
     _, service = repository
     before = query(service, "symbols", query="prepare")
