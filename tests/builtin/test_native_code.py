@@ -987,6 +987,42 @@ def test_parser_memory_monitor_failure_aborts_rebuild(repository, monkeypatch):
     assert service.status("scope").last_build["reason"] == "code_parser_failed"
 
 
+def test_parser_reconciles_buffered_progress_before_memory_failure(tmp_path, monkeypatch):
+    import select
+
+    from powercontext.builtin.code import process
+
+    job_file = tmp_path / "jobs.json"
+    job_file.write_text("{}")
+    popen = subprocess.Popen
+    workers = []
+
+    def buffered_worker(arguments, **kwargs):
+        worker = popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys,time; sys.stdout.write('begin:0\\nend:0\\nbegin:1\\nend:1\\nbegin:2\\n'); sys.stdout.flush(); time.sleep(30)",
+            ],
+            **kwargs,
+        )
+        workers.append(worker)
+        assert worker.stdout is not None
+        ready, _, _ = select.select([worker.stdout], [], [], 5)
+        assert ready
+        return worker
+
+    with monkeypatch.context() as patch:
+        patch.setattr(process.subprocess, "Popen", buffered_worker)
+        patch.setattr(process, "_budget_failure", lambda *args: "memory_limit")
+        completed, failed, reason = process._batch(job_file, 3, time.monotonic() + 10, 30, 64 * 1024 * 1024)
+
+    assert completed == {0, 1}
+    assert failed == 2
+    assert reason == "memory_limit"
+    assert workers[0].returncode is not None and workers[0].returncode < 0
+
+
 def test_corrupt_cache_pointer_and_build_status_recover_on_sync(repository):
     _, service = repository
     directory = next(service.config.cache_dir.iterdir())

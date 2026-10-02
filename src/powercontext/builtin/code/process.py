@@ -55,7 +55,7 @@ def _budget_failure(pid: int, remaining: float, memory_bytes: int) -> str | None
 
 def _monitor(
     process: subprocess.Popen[bytes], count: int, deadline: float, parse_seconds: float, memory_bytes: int
-) -> tuple[set[int], int | None, str]:
+) -> tuple[set[int], int | None, str, bytes]:
     completed: set[int] = set()
     current = None
     expires = min(deadline, time.monotonic() + 10)
@@ -68,12 +68,12 @@ def _monitor(
             check_deadline(deadline)
             remaining = expires - time.monotonic()
             if reason := _budget_failure(process.pid, remaining, memory_bytes):
-                return completed, current, reason
+                return completed, current, reason, buffer
             if not selector.select(min(0.1, remaining)):
                 continue
             data = os.read(process.stdout.fileno(), 4096)
             if not data:
-                return completed, current, "parser_crash"
+                return completed, current, "parser_crash", buffer
             buffer += data
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
@@ -86,7 +86,7 @@ def _monitor(
                     current = None
                     expires = min(deadline, time.monotonic() + 10)
                     if len(completed) == count:
-                        return completed, None, "complete"
+                        return completed, None, "complete", buffer
                 else:
                     raise CodeError("code_parser_failed")
 
@@ -102,13 +102,38 @@ def _batch(
         cwd=job_file.parent,
         env=environment,
     ) as process:
+        result = None
         try:
             result = _monitor(process, count, deadline, parse_seconds, memory_bytes)
         finally:
             if process.poll() is None:
                 process.kill()
             process.wait()
-    return result
+            if result is not None and result[2] == "memory_limit" and process.stdout is not None:
+                trailing = result[3] + process.stdout.read()
+                completed, current = _reconcile_progress(trailing, count, result[0], result[1])
+                result = completed, current, result[2], b""
+    if result is None:
+        raise CodeError("code_parser_failed")
+    return result[:3]
+
+
+def _reconcile_progress(
+    data: bytes, count: int, completed: set[int], current: int | None
+) -> tuple[set[int], int | None]:
+    """Account for progress already written before a worker is terminated."""
+
+    while b"\n" in data:
+        line, data = data.split(b"\n", 1)
+        action, index = _progress(line, count)
+        if action == b"begin":
+            current = index
+        elif action == b"end" and current == index:
+            completed.add(index)
+            current = None
+        else:
+            raise CodeError("code_parser_failed")
+    return completed, current
 
 
 def extract_jobs(
